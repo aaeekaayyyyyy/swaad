@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import axios from 'axios'
+import { API_URL } from '../config'
 import './MenuUpload.css'
-
-const API_URL = 'http://localhost:8000'
 
 function MenuUpload({ onMenuProcessed, userProfile, onRecommendationsReceived }) {
   const [menuText, setMenuText] = useState('')

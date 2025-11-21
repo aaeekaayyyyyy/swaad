@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import axios from 'axios'
+import { API_URL } from '../config'
 import './DishInput.css'
-
-const API_URL = 'http://localhost:8000'
 
 function DishInput({ onProfileCreated, initialDishes = [], onDishesUpdate }) {
   // Initialize dishes from props if provided

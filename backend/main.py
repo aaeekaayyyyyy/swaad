@@ -60,9 +60,29 @@ except ImportError:
 app = FastAPI(title="Swaad Recipe Recommendation API")
 
 # CORS middleware
+# Allow localhost for development and any frontend URL from environment
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+]
+
+# Add production frontend URL from environment if set
+FRONTEND_URL = os.getenv("FRONTEND_URL", "")
+if FRONTEND_URL:
+    allowed_origins.append(FRONTEND_URL)
+
+# Allow all origins in development, or specific origins in production
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+if CORS_ORIGINS != "*":
+    # Parse comma-separated list of origins
+    allowed_origins.extend([origin.strip() for origin in CORS_ORIGINS.split(",")])
+else:
+    # In development, allow all origins
+    allowed_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
