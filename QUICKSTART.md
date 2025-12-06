@@ -53,6 +53,10 @@ This will start both servers automatically.
 
 ---
 
+Once you are up and running and you have entered your favorite recipes/dishes we have provided a sample menu in menu.txt for a faster execution.
+
+---
+
 ## 📝 First Time Setup Checklist
 
 - [ ] Python 3.7+ installed

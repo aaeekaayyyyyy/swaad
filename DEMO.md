@@ -214,6 +214,12 @@ For convenience, you can use the provided start script:
 
 ---
 
+## Demo Menu
+
+Once you are up and running and you have entered your favorite recipes/dishes we have provided a sample menu in menu.txt for a faster execution.
+
+---
+
 ## ✅ Verification Checklist
 
 After starting the application, verify everything is working:
@@ -423,7 +429,8 @@ swaad/
 │   └── ...
 ├── recipes_with_flavour_profiles.csv  # Recipe database (REQUIRED)
 ├── start.sh                 # Automated start script
-├── README.md                # This file
+├── menu.txt                 # Demo menu
+├── DEMO.md                  # This file has all the info you need for the project
 └── QUICKSTART.md            # Quick reference guide
 ```
 
