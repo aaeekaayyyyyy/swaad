@@ -13,17 +13,12 @@ email-validator>=2.0.0
 google-auth>=2.23.0
 google-auth-oauthlib>=1.1.0
 google-auth-httplib2>=0.1.1
-Pillow>=10.0.0
+# Menu text extraction - Google Gemini API
+# Required for menu image processing
+google-genai>=0.2.0
 
-# OCR libraries (for menu image scanning)
-# PaddleOCR is recommended for best accuracy with structured text like menus
-paddleocr>=2.7.0
-# Fallback OCR options
-easyocr>=1.7.0
-pytesseract>=0.3.10
-
-# Note: For pytesseract, you may need to install tesseract separately:
-# macOS: brew install tesseract
-# Ubuntu/Debian: sudo apt-get install tesseract-ocr
-# Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki
+# For Gemini API setup:
+# 1. Get API key from https://aistudio.google.com
+# 2. Set GEMINI_API_KEY environment variable or add to backend/.env file:
+#    GEMINI_API_KEY=your_api_key_here
 

@@ -77,9 +77,36 @@ cd swaad
    - NumPy (numerical computing)
    - Scikit-learn (machine learning)
    - SQLAlchemy (database ORM)
+   - Google Gemini API (for menu image extraction)
    - And other dependencies
 
-5. **Verify the CSV file location:**
+5. **Set up Gemini API Key (Required for menu image upload):**
+   
+   The application uses Google's Gemini API to extract dish names from menu images. You need to set up an API key:
+   
+   a. **Get a Gemini API key:**
+      - Go to [Google AI Studio](https://aistudio.google.com)
+      - Sign in with your Google account
+      - Click **"Get API Key"** in the sidebar
+      - Click **"Create API key"** → Select **"Create API key in new project"**
+      - Copy your API key (it starts with `AIza...`)
+   
+   b. **Add the API key to your environment:**
+      
+      **Option 1: Create a `.env` file** (recommended):
+      ```bash
+      cd backend
+      echo "GEMINI_API_KEY=your_api_key_here" > .env
+      ```
+      
+      **Option 2: Set as environment variable:**
+      ```bash
+      export GEMINI_API_KEY=your_api_key_here
+      ```
+   
+   > **Note:** The `.env` file should be in the `backend/` directory and will be automatically loaded by the application.
+
+6. **Verify the CSV file location:**
    ```bash
    # Make sure recipes_with_flavour_profiles.csv is in the project root
    # Path should be: ../recipes_with_flavour_profiles.csv (one level up from backend/)
@@ -216,7 +243,7 @@ For convenience, you can use the provided start script:
 
 ## Demo Menu
 
-Once you are up and running and you have entered your favorite recipes/dishes we have provided a sample menu in menu.txt for a faster execution.
+Once you are up and running and you have entered your favorite recipes/dishes, we have provided a sample menu in `menu.txt` for faster testing. You can also upload menu images - the system will automatically extract dish names using Gemini API.
 
 ---
 
@@ -336,16 +363,26 @@ After starting the application, verify everything is working:
   - Check terminal for errors
   - Hard refresh browser (Ctrl+Shift+R or Cmd+Shift+R)
 
-**Problem: OCR/image upload not working**
-- **Solution:** OCR features require additional dependencies. Install them:
+**Problem: Menu image upload not working**
+- **Solution 1:** Verify Gemini API key is set:
+  ```bash
+  # Check if .env file exists and has the key
+  cd backend
+  cat .env | grep GEMINI_API_KEY
+  ```
+  If not set, follow the setup instructions in Step 5 of Installation.
+
+- **Solution 2:** Verify google-genai is installed:
   ```bash
   cd backend
   source venv/bin/activate
-  pip install Pillow easyocr
-  # OR
-  pip install Pillow pytesseract
-  # For pytesseract on macOS: brew install tesseract
+  pip install google-genai
   ```
+
+- **Solution 3:** Check API key is valid:
+  - Make sure the API key starts with `AIza...`
+  - Verify the key is active at [Google AI Studio](https://aistudio.google.com)
+  - Ensure there are no extra spaces or quotes in the `.env` file
 
 ---
 
@@ -377,7 +414,7 @@ After starting the application, verify everything is working:
 1. **Upload or Enter Menu:**
    - **Option A:** Paste menu text directly into the text area
    - **Option B:** Type dish names (one per line)
-   - **Option C:** Upload a menu image (if OCR is enabled)
+   - **Option C:** Upload a menu image (uses Gemini API to extract dish names automatically)
 
 2. **Process Menu:**
    - The system automatically extracts dish names from the text
@@ -429,8 +466,9 @@ swaad/
 │   └── ...
 ├── recipes_with_flavour_profiles.csv  # Recipe database (REQUIRED)
 ├── start.sh                 # Automated start script
-├── menu.txt                 # Demo menu
-├── DEMO.md                  # This file has all the info you need for the project
+├── menu.txt                 # Demo menu text file
+├── menu_text_extractor.ipynb # Jupyter notebook for menu extraction (reference)
+├── README.md                # This file - comprehensive documentation
 └── QUICKSTART.md            # Quick reference guide
 ```
 
@@ -449,6 +487,7 @@ The backend provides the following REST API endpoints:
 ### Profile & Recommendations
 - `POST /api/create-profile` - Create user flavor profile from liked dishes
 - `POST /api/process-menu` - Extract dish names from menu text
+- `POST /api/upload-menu-image` - Upload menu image and extract dish names using Gemini API
 - `POST /api/recommendations` - Get dish recommendations based on profile and menu
 - `GET /api/search-recipes` - Search for recipes by name
 
@@ -471,8 +510,7 @@ All endpoints are prefixed with `/api` except the documentation endpoints.
 - **SQLAlchemy** - Database ORM
 - **Python-JOSE** - JWT token handling
 - **Passlib** - Password hashing
-- **Pillow** - Image processing (for OCR)
-- **EasyOCR/PyTesseract** - Optical Character Recognition (optional)
+- **Google Gemini API** - Intelligent menu image extraction (extracts only dish names)
 
 ### Frontend
 - **React 18** - UI library
@@ -497,7 +535,8 @@ All endpoints are prefixed with `/api` except the documentation endpoints.
 - **Recipe Search**: Search the recipe database by dish name
 
 ### Advanced Features
-- **Menu Image Upload**: Upload photos of menus and automatically extract text using OCR
+- **Menu Image Upload**: Upload photos of menus and automatically extract dish names using Google Gemini API
+- **Intelligent Extraction**: Extracts only dish names (excludes prices, descriptions, allergen symbols, and metadata)
 - **Smart Menu Parsing**: Recognizes category synonyms (appetizers/starters, mains/main course, etc.)
 - **User Authentication**: Sign up, login, and Google OAuth integration
 - **User Profiles**: Save and manage your flavor preferences
@@ -521,7 +560,7 @@ All endpoints are prefixed with `/api` except the documentation endpoints.
 
 3. **Menu Processing:**
    - Text input: Uses regex and heuristics to extract dish names
-   - Image input: Uses OCR (EasyOCR or Tesseract) to extract text, then processes as text
+   - Image input: Uses Google Gemini API to intelligently extract only dish names (no prices, descriptions, or metadata)
 
 4. **Recipe Matching:**
    - Uses fuzzy string matching to find recipes by name
@@ -541,6 +580,7 @@ All endpoints are prefixed with `/api` except the documentation endpoints.
 For production or advanced configuration, you can set these environment variables:
 
 ### Backend
+- `GEMINI_API_KEY` - **Required** - Google Gemini API key for menu image extraction (get from https://aistudio.google.com)
 - `FRONTEND_URL` - Frontend URL for CORS configuration
 - `GOOGLE_CLIENT_ID` - Google OAuth client ID
 - `SECRET_KEY` - Secret key for JWT tokens (auto-generated if not set)
@@ -570,9 +610,10 @@ The frontend can be deployed to:
 - **Any static hosting service**
 
 Remember to:
-1. Set `VITE_API_URL` environment variable to your backend URL
-2. Update CORS settings in backend to allow your frontend domain
-3. Ensure `recipes_with_flavour_profiles.csv` is accessible to the backend
+1. Set `GEMINI_API_KEY` environment variable for menu image extraction
+2. Set `VITE_API_URL` environment variable to your backend URL
+3. Update CORS settings in backend to allow your frontend domain
+4. Ensure `recipes_with_flavour_profiles.csv` is accessible to the backend
 
 ---
 
@@ -612,6 +653,7 @@ If you encounter issues:
 4. Verify all prerequisites are installed correctly
 5. Ensure both servers are running
 6. Check that `recipes_with_flavour_profiles.csv` is in the correct location
+7. Verify `GEMINI_API_KEY` is set if using menu image upload feature
 
 ---
 

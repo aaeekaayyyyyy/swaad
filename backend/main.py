@@ -37,31 +37,13 @@ except ImportError:
     GOOGLE_CLIENT_ID = None
 from datetime import timedelta
 
-# Optional OCR imports
+# Google Gemini API for intelligent menu extraction
 try:
-    from PIL import Image, ImageEnhance, ImageFilter
-    import io
-    PIL_AVAILABLE = True
+    from google import genai
+    from google.genai import types
+    GEMINI_AVAILABLE = True
 except ImportError:
-    PIL_AVAILABLE = False
-
-try:
-    from paddleocr import PaddleOCR
-    PADDLEOCR_AVAILABLE = True
-except ImportError:
-    PADDLEOCR_AVAILABLE = False
-
-try:
-    import easyocr
-    EASYOCR_AVAILABLE = True
-except ImportError:
-    EASYOCR_AVAILABLE = False
-
-try:
-    import pytesseract
-    PYTESSERACT_AVAILABLE = True
-except ImportError:
-    PYTESSERACT_AVAILABLE = False
+    GEMINI_AVAILABLE = False
 
 app = FastAPI(title="Swaad Recipe Recommendation API")
 
@@ -255,7 +237,7 @@ def normalize_dish_name(name: str) -> str:
     # Remove extra spaces (multiple spaces to single space)
     name = re.sub(r'\s+', ' ', name)
     
-    # Remove common OCR artifacts
+    # Remove common text artifacts
     name = re.sub(r'[^\w\s\-\'&,()]', '', name)  # Keep only alphanumeric, spaces, hyphens, apostrophes, commas, parentheses, ampersands
     name = re.sub(r'\s+', ' ', name)  # Clean up spaces again
     
@@ -869,131 +851,175 @@ def create_user_profile(user_dishes: UserDishes):
         "desserts": desserts_profile
     }
 
-# Initialize OCR readers (lazy loading)
-paddleocr_reader = None
-easyocr_reader = None
+def get_gemini_client():
+    """Get or initialize Gemini client"""
+    if not GEMINI_AVAILABLE:
+        return None
+    
+    try:
+        # Client automatically uses GEMINI_API_KEY from environment
+        return genai.Client()
+    except Exception as e:
+        print(f"Warning: Gemini client initialization failed: {e}")
+        return None
 
-def preprocess_image(image: Image.Image) -> Image.Image:
-    """Preprocess image for better OCR accuracy"""
-    # Convert to RGB if needed
-    if image.mode != 'RGB':
-        image = image.convert('RGB')
+def extract_dish_names_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+    """Extract ONLY dish names from menu image using Gemini API with structured JSON output"""
     
-    # Convert to grayscale for better text recognition
-    if image.mode != 'L':
-        gray = image.convert('L')
-    else:
-        gray = image
-    
-    # Enhance contrast
-    enhancer = ImageEnhance.Contrast(gray)
-    gray = enhancer.enhance(1.5)
-    
-    # Enhance sharpness
-    enhancer = ImageEnhance.Sharpness(gray)
-    gray = enhancer.enhance(2.0)
-    
-    # Apply slight denoising
-    gray = gray.filter(ImageFilter.MedianFilter(size=3))
-    
-    # Convert back to RGB for OCR libraries that expect it
-    return gray.convert('RGB')
-
-def get_paddleocr_reader():
-    """Lazy load PaddleOCR reader"""
-    global paddleocr_reader
-    if paddleocr_reader is None and PADDLEOCR_AVAILABLE:
-        try:
-            # Use English language, CPU mode, enable text direction classification
-            paddleocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
-        except Exception as e:
-            print(f"Warning: PaddleOCR initialization failed: {e}")
-            paddleocr_reader = None
-    return paddleocr_reader
-
-def get_easyocr_reader():
-    """Lazy load EasyOCR reader"""
-    global easyocr_reader
-    if easyocr_reader is None and EASYOCR_AVAILABLE:
-        try:
-            easyocr_reader = easyocr.Reader(['en'], gpu=False)
-        except Exception as e:
-            print(f"Warning: EasyOCR initialization failed: {e}")
-            easyocr_reader = None
-    return easyocr_reader
-
-def extract_text_from_image(image_bytes: bytes) -> str:
-    """Extract text from menu image using OCR with improved preprocessing"""
-    if not PIL_AVAILABLE:
+    if not GEMINI_AVAILABLE:
         raise HTTPException(
-            status_code=500, 
-            detail="PIL/Pillow not installed. Please install: pip install Pillow"
+            status_code=500,
+            detail="Gemini API not available. Please install google-genai: pip install google-genai"
+        )
+    
+    gemini_client = get_gemini_client()
+    if not gemini_client:
+        raise HTTPException(
+            status_code=500,
+            detail="Gemini API key not configured. Please set GEMINI_API_KEY environment variable or add it to .env file. Get your API key from https://aistudio.google.com"
         )
     
     try:
-        from PIL import Image
-        import io
-        import numpy as np
-        
-        # Load and preprocess image
-        image = Image.open(io.BytesIO(image_bytes))
-        processed_image = preprocess_image(image)
-        img_array = np.array(processed_image)
-        
-        # Try PaddleOCR first (best for structured text like menus)
-        paddle_reader = get_paddleocr_reader()
-        if paddle_reader:
-            try:
-                results = paddle_reader.ocr(img_array, cls=True)
-                if results and results[0]:
-                    # Extract text from PaddleOCR results
-                    # Format: [[[bbox], (text, confidence)], ...]
-                    text_lines = []
-                    for line in results[0]:
-                        if line and len(line) >= 2:
-                            text = line[1][0] if isinstance(line[1], tuple) else str(line[1])
-                            confidence = line[1][1] if isinstance(line[1], tuple) and len(line[1]) > 1 else 1.0
-                            # Filter by confidence (only keep high-confidence text)
-                            if confidence > 0.5:
-                                text_lines.append(text)
-                    if text_lines:
-                        return '\n'.join(text_lines)
-            except Exception as e:
-                print(f"PaddleOCR error: {e}, falling back to other OCR")
-        
-        # Try EasyOCR as fallback
-        easyocr_reader = get_easyocr_reader()
-        if easyocr_reader:
-            try:
-                results = easyocr_reader.readtext(img_array)
-                text_lines = []
-                for result in results:
-                    if len(result) >= 2:
-                        text = result[1]
-                        confidence = result[2] if len(result) > 2 else 1.0
-                        # Filter by confidence
-                        if confidence > 0.5:
-                            text_lines.append(text)
-                if text_lines:
-                    return '\n'.join(text_lines)
-            except Exception as e:
-                print(f"EasyOCR error: {e}, falling back to pytesseract")
-        
-        # Fallback to pytesseract
-        if PYTESSERACT_AVAILABLE:
-            import pytesseract
-            # Use processed image for better results
-            text = pytesseract.image_to_string(processed_image, config='--psm 6')
-            return text
-        
-        raise HTTPException(
-            status_code=500, 
-            detail="No OCR engine available. Please install paddleocr (pip install paddleocr) or easyocr (pip install easyocr) or pytesseract (pip install pytesseract)."
+        # Use JSON response mode for structured output
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json"
         )
+        
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                """You are a menu extraction expert. Extract ONLY the dish/item names from this menu image.
+
+CRITICAL RULES - FOLLOW THESE EXACTLY:
+1. Extract ONLY the dish/item names - nothing else
+2. DO NOT include:
+   - Prices (e.g., $9.85, $14.00, $12.50)
+   - Descriptions (e.g., "Eggs your style", "served with", ingredient lists)
+   - Allergen symbols (e.g., Ⓦ, Ⓓ, Ⓔ, Ⓕ, Ⓢ, Ⓝ, Ⓩ, Ⓥ, Ⓦ)
+   - Section headers (e.g., "Breakfast", "Tartines", "Shakshuka", "BRUNCH")
+   - Restaurant name, hours, footer text, or any other metadata
+   - Partial words or fragments
+3. DO include:
+   - Complete dish names exactly as they appear (e.g., "Breakfast Sandwich", "French Toast")
+   - Variants if clearly separate dishes (e.g., "French Toast - Sweet", "French Toast - Savory")
+   - Full dish names even if they span multiple words
+
+EXAMPLES OF CORRECT EXTRACTION:
+✅ "Breakfast Sandwich" (correct)
+✅ "Croissant Breakfast Sandwich" (correct)
+✅ "Halloumi Sunny-Side Breakfast Sandwich" (correct)
+❌ "$9.85" (WRONG - this is a price)
+❌ "Eggs your style" (WRONG - this is a description)
+❌ "Breakfast" (WRONG - this is a section header)
+❌ "BRUNCH" (WRONG - this is a section header)
+❌ "Served all day" (WRONG - this is metadata)
+
+Return a JSON object with this exact format:
+{
+  "dishes": [
+    "Dish Name 1",
+    "Dish Name 2",
+    "Dish Name 3"
+  ]
+}
+
+Return ONLY valid JSON, no other text or explanation."""
+            ],
+            config=config
+        )
+        
+        if response and response.text:
+            # Parse JSON response
+            data = json.loads(response.text)
+            
+            # Extract dish names from JSON
+            if isinstance(data, dict) and "dishes" in data:
+                dishes = data["dishes"]
+            elif isinstance(data, list):
+                dishes = data
+            else:
+                # Fallback: try to extract from text if JSON parsing fails
+                dishes = [line.strip() for line in response.text.strip().split('\n') if line.strip()]
+            
+            # Filter out empty strings and return as newline-separated string
+            dish_names = [dish.strip() for dish in dishes if dish and dish.strip()]
+            
+            if not dish_names:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No dish names found in menu image. Please ensure the image contains a readable menu."
+                )
+            
+            return '\n'.join(dish_names)
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Gemini API returned empty response"
+            )
+            
+    except json.JSONDecodeError as e:
+        # If JSON parsing fails, try to extract from plain text response
+        try:
+            text = response.text if response and response.text else ""
+            
+            # Try to find JSON in the text (sometimes Gemini adds extra text)
+            import re
+            json_match = re.search(r'\{[^{}]*"dishes"[^{}]*\[[^\]]*\][^{}]*\}', text, re.DOTALL)
+            if json_match:
+                try:
+                    data = json.loads(json_match.group(0))
+                    if isinstance(data, dict) and "dishes" in data:
+                        dishes = data["dishes"]
+                        dish_names = [dish.strip() for dish in dishes if dish and dish.strip()]
+                        if dish_names:
+                            return '\n'.join(dish_names)
+                except:
+                    pass
+            
+            # Fallback: try to extract dish names from plain text
+            lines = [line.strip() for line in text.split('\n') if line.strip()]
+            dish_names = []
+            skip_keywords = ['$', 'price', 'contains', 'allergen', 'served', 'hours', 'brunch', 'breakfast', 'tartines', 'shakshuka', 'menu', 'restaurant']
+            
+            for line in lines:
+                line_lower = line.lower()
+                # Skip lines that are clearly not dish names
+                if any(skip in line_lower for skip in skip_keywords):
+                    continue
+                # Skip lines that are mostly numbers or symbols
+                if re.match(r'^[\d\s\$\.\,\-]+$', line):
+                    continue
+                # Skip very short or very long lines
+                if len(line) < 3 or len(line) > 80:
+                    continue
+                # Skip lines that look like prices
+                if re.match(r'^\$?\d+\.?\d*\s*$', line):
+                    continue
+                
+                dish_names.append(line)
+            
+            if dish_names:
+                return '\n'.join(dish_names)
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to extract dish names. JSON parsing error: {str(e)}. Please ensure GEMINI_API_KEY is set correctly."
+                )
+        except HTTPException:
+            raise
+        except Exception as fallback_error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to extract dish names: {str(fallback_error)}"
+            )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error extracting text from image: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error extracting dish names from image: {str(e)}"
+        )
 
 @app.post("/api/process-menu")
 def process_menu_text(menu: MenuText):
@@ -1008,7 +1034,7 @@ def process_menu_text(menu: MenuText):
 
 @app.post("/api/upload-menu-image")
 async def upload_menu_image(file: UploadFile = File(...)):
-    """Upload menu image and extract text using OCR"""
+    """Upload menu image and extract ONLY dish names using Gemini API"""
     # Validate file type
     if not file.content_type or not file.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="File must be an image")
@@ -1017,8 +1043,20 @@ async def upload_menu_image(file: UploadFile = File(...)):
     try:
         image_bytes = await file.read()
         
-        # Extract text from image
-        extracted_text = extract_text_from_image(image_bytes)
+        # Determine MIME type
+        mime_type = file.content_type
+        if not mime_type or mime_type == "application/octet-stream":
+            # Try to infer from filename
+            filename = file.filename.lower() if file.filename else ""
+            if filename.endswith('.png'):
+                mime_type = "image/png"
+            elif filename.endswith('.webp'):
+                mime_type = "image/webp"
+            else:
+                mime_type = "image/jpeg"  # Default
+        
+        # Extract dish names from image using Gemini API
+        extracted_text = extract_dish_names_from_image(image_bytes, mime_type)
         
         if not extracted_text or len(extracted_text.strip()) < 10:
             raise HTTPException(status_code=400, detail="Could not extract text from image. Please ensure the image is clear and contains readable text.")
