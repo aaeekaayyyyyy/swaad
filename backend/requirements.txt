@@ -14,14 +14,16 @@ google-auth>=2.23.0
 google-auth-oauthlib>=1.1.0
 google-auth-httplib2>=0.1.1
 Pillow>=10.0.0
+
+# OCR libraries (for menu image scanning)
+# PaddleOCR is recommended for best accuracy with structured text like menus
+paddleocr>=2.7.0
+# Fallback OCR options
 easyocr>=1.7.0
 pytesseract>=0.3.10
 
-
-# Optional: For menu image scanning (OCR)
-# Install one of these for image upload functionality:
-# Pillow>=10.0.0
-# easyocr>=1.7.0  # Recommended - more accurate
-# OR
-# pytesseract>=0.3.10  # Requires: brew install tesseract (macOS)
+# Note: For pytesseract, you may need to install tesseract separately:
+# macOS: brew install tesseract
+# Ubuntu/Debian: sudo apt-get install tesseract-ocr
+# Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki
 

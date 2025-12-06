@@ -39,11 +39,17 @@ from datetime import timedelta
 
 # Optional OCR imports
 try:
-    from PIL import Image
+    from PIL import Image, ImageEnhance, ImageFilter
     import io
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
+
+try:
+    from paddleocr import PaddleOCR
+    PADDLEOCR_AVAILABLE = True
+except ImportError:
+    PADDLEOCR_AVAILABLE = False
 
 try:
     import easyocr
@@ -238,19 +244,137 @@ def calculate_average_flavor_profile(recipes: List[Dict]) -> Dict[str, float]:
     
     return {k: round(v, 2) for k, v in avg_profile.items()}
 
+def normalize_dish_name(name: str) -> str:
+    """Normalize dish name: clean, standardize capitalization, remove extra spaces"""
+    if not name:
+        return ""
+    
+    # Remove leading/trailing whitespace
+    name = name.strip()
+    
+    # Remove extra spaces (multiple spaces to single space)
+    name = re.sub(r'\s+', ' ', name)
+    
+    # Remove common OCR artifacts
+    name = re.sub(r'[^\w\s\-\'&,()]', '', name)  # Keep only alphanumeric, spaces, hyphens, apostrophes, commas, parentheses, ampersands
+    name = re.sub(r'\s+', ' ', name)  # Clean up spaces again
+    
+    # Smart capitalization: Title case but preserve certain words
+    words = name.split()
+    if not words:
+        return ""
+    
+    # Words that should remain lowercase (unless first word)
+    lowercase_words = {'and', 'or', 'the', 'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'from'}
+    
+    # Words that should remain uppercase
+    uppercase_words = {'USA', 'UK', 'NYC', 'BBQ', 'AI', 'CEO'}
+    
+    normalized_words = []
+    for i, word in enumerate(words):
+        word_lower = word.lower()
+        if word_lower in uppercase_words:
+            normalized_words.append(word.upper())
+        elif i == 0 or word_lower not in lowercase_words:
+            # Title case: first letter uppercase, rest lowercase
+            normalized_words.append(word.capitalize())
+        else:
+            normalized_words.append(word_lower)
+    
+    name = ' '.join(normalized_words)
+    
+    # Final cleanup
+    name = name.strip()
+    
+    return name
+
+def is_price_line(line: str) -> bool:
+    """Check if a line is likely a price or price-related text"""
+    line_lower = line.lower().strip()
+    
+    # Patterns that indicate prices
+    price_patterns = [
+        r'^\$?\d+\.?\d*\s*$',  # Just a number/price
+        r'^\d+\.?\d*\s*\$',     # Number followed by dollar sign
+        r'^\$?\d+\.?\d*\s*-\s*\$?\d+\.?\d*',  # Price range
+        r'^\d+\.?\d*\s*(usd|eur|gbp|rs|rupees?)',  # Currency symbols
+        r'^price',  # Starts with "price"
+        r'^\d+\.?\d*\s*each',  # "X.XX each"
+        r'^\d+\.?\d*\s*per',   # "X.XX per"
+    ]
+    
+    for pattern in price_patterns:
+        if re.match(pattern, line_lower):
+            return True
+    
+    # Check if line is mostly numbers and currency symbols
+    if len(line) > 0:
+        non_price_chars = re.sub(r'[\d\s\$\.\,\-]', '', line)
+        if len(non_price_chars) / len(line) < 0.3:  # Less than 30% non-price characters
+            return True
+    
+    return False
+
+def is_dish_name(line: str) -> bool:
+    """Check if a line is likely a dish name"""
+    line_clean = line.strip()
+    
+    # Too short or too long
+    if len(line_clean) < 2 or len(line_clean) > 80:
+        return False
+    
+    # Skip if it's clearly a price
+    if is_price_line(line_clean):
+        return False
+    
+    # Skip if it's mostly numbers
+    if re.match(r'^\d+[\.\)]\s*$', line_clean):
+        return False
+    
+    # Skip common non-dish keywords
+    skip_keywords = [
+        'menu', 'drink', 'beverage', 'wine', 'beer', 'cocktail', 'coffee', 'tea', 
+        'juice', 'allergen', 'contains', 'gluten', 'vegan', 'vegetarian',
+        'page', 'copyright', 'tel', 'phone', 'email', 'website', 'www',
+        'hours', 'open', 'closed', 'monday', 'tuesday', 'wednesday', 'thursday',
+        'friday', 'saturday', 'sunday', 'am', 'pm'
+    ]
+    
+    line_lower = line_clean.lower()
+    if any(keyword in line_lower for keyword in skip_keywords):
+        # But allow if it's part of a dish name (e.g., "Vegan Burger")
+        if not any(keyword == line_lower for keyword in skip_keywords):
+            # Check if it's a standalone keyword
+            if line_lower in skip_keywords:
+                return False
+    
+    # Should have at least one letter
+    if not re.search(r'[a-zA-Z]', line_clean):
+        return False
+    
+    # Should not be mostly special characters
+    special_char_ratio = len(re.sub(r'[\w\s]', '', line_clean)) / len(line_clean) if line_clean else 0
+    if special_char_ratio > 0.5:
+        return False
+    
+    return True
+
 def extract_dishes_from_menu(menu_text: str) -> Dict[str, List[str]]:
-    """Extract dish names from menu text and categorize them"""
+    """Extract dish names from menu text and categorize them with improved filtering"""
     lines = menu_text.split('\n')
     
     # Category synonyms mapping
     appetizer_synonyms = ['appetizer', 'appetiser', 'appetizers', 'appetisers', 
                          'starter', 'starters', 'small plates', 'small plate',
-                         'tapas', 'hors d\'oeuvres', 'hors d\'oeuvre']
+                         'tapas', 'hors d\'oeuvres', 'hors d\'oeuvre', 'hors d oeuvres',
+                         'beginning', 'beginnings', 'first course', 'first courses']
     mains_synonyms = ['main', 'mains', 'main course', 'main courses', 
                      'entree', 'entrees', 'big plates', 'big plate',
-                     'large plates', 'large plate', 'mains course']
+                     'large plates', 'large plate', 'mains course', 'main dish',
+                     'main dishes', 'second course', 'second courses']
     dessert_synonyms = ['dessert', 'desserts', 'sweet', 'sweets', 
-                       'pudding', 'puddings', 'finale', 'finales']
+                       'pudding', 'puddings', 'finale', 'finales',
+                       'sweet course', 'sweet courses', 'after dinner']
     
     categorized_dishes = {
         "appetizer": [],
@@ -282,44 +406,82 @@ def extract_dishes_from_menu(menu_text: str) -> Dict[str, List[str]]:
             current_category = "desserts"
             continue
         
-        # Skip lines that are clearly not dish names
-        skip_keywords = ['$', 'price', 'menu', 'drink', 'beverage', 'wine', 'beer', 
-                        'cocktail', 'coffee', 'tea', 'juice', 'allergen', 'contains']
-        if any(skip in line_lower for skip in skip_keywords):
+        # Skip if not a valid dish name
+        if not is_dish_name(line_original):
             continue
         
-        # Remove common prefixes/suffixes
-        line_clean = re.sub(r'^\d+[\.\)]\s*', '', line_original)  # Remove numbering
-        line_clean = re.sub(r'\s*\$.*$', '', line_clean)  # Remove prices
-        line_clean = re.sub(r'\s*-\s*\$.*$', '', line_clean)  # Remove prices with dash
+        # Clean and extract dish name (remove prices, numbers, etc.)
+        # Remove numbering at start (1., 2), etc.)
+        line_clean = re.sub(r'^\d+[\.\)]\s*', '', line_original)
+        
+        # Remove prices - more comprehensive patterns
+        # Remove $XX.XX at end
+        line_clean = re.sub(r'\s*\$?\d+\.?\d*\s*$', '', line_clean)
+        # Remove - $XX.XX
+        line_clean = re.sub(r'\s*-\s*\$?\d+\.?\d*\s*$', '', line_clean)
+        # Remove (XX.XX) or [XX.XX]
+        line_clean = re.sub(r'\s*[\(\[].*?\d+\.?\d*.*?[\)\]]\s*$', '', line_clean)
+        # Remove standalone price patterns
+        line_clean = re.sub(r'\s+\$\d+\.?\d*\s*', ' ', line_clean)
+        
+        # Remove common suffixes that might be prices
+        line_clean = re.sub(r'\s+\d+\.?\d*\s*(usd|eur|gbp|rs|rupees?|each|per)\s*$', '', line_clean, flags=re.IGNORECASE)
+        
+        # Clean up
         line_clean = line_clean.strip()
         
-        # Skip if too short or too long
-        if len(line_clean) < 3 or len(line_clean) > 100:
+        # Skip if too short after cleaning
+        if len(line_clean) < 2:
+            continue
+        
+        # Normalize the dish name
+        normalized_name = normalize_dish_name(line_clean)
+        
+        if not normalized_name or len(normalized_name) < 2:
+            continue
+        
+        # Skip if it's still a price after cleaning
+        if is_price_line(normalized_name):
             continue
         
         # If we have a current category, use it; otherwise try to infer
         if current_category:
-            categorized_dishes[current_category].append(line_clean)
+            if normalized_name not in categorized_dishes[current_category]:
+                categorized_dishes[current_category].append(normalized_name)
         else:
             # Try to infer category from dish name
-            dish_lower = line_clean.lower()
+            dish_lower = normalized_name.lower()
             dessert_keywords = ['cake', 'pie', 'ice cream', 'pudding', 'chocolate', 'cookie', 
-                              'brownie', 'tart', 'mousse', 'custard', 'flan', 'sorbet']
+                              'brownie', 'tart', 'mousse', 'custard', 'flan', 'sorbet',
+                              'cheesecake', 'tiramisu', 'gelato', 'sundae', 'parfait',
+                              'creme brulee', 'creme brûlée', 'baklava', 'cannoli']
             appetizer_keywords = ['salad', 'soup', 'dip', 'bruschetta', 'samosa', 'spring roll',
-                                'wings', 'nachos', 'quesadilla', 'hummus', 'guacamole']
+                                'wings', 'nachos', 'quesadilla', 'hummus', 'guacamole',
+                                'appetizer', 'starter', 'tapas', 'antipasto', 'mezze',
+                                'crostini', 'canape', 'canapé']
             
             if any(kw in dish_lower for kw in dessert_keywords):
-                categorized_dishes["desserts"].append(line_clean)
+                if normalized_name not in categorized_dishes["desserts"]:
+                    categorized_dishes["desserts"].append(normalized_name)
             elif any(kw in dish_lower for kw in appetizer_keywords):
-                categorized_dishes["appetizer"].append(line_clean)
+                if normalized_name not in categorized_dishes["appetizer"]:
+                    categorized_dishes["appetizer"].append(normalized_name)
             else:
                 # Default to mains if uncertain
-                categorized_dishes["mains"].append(line_clean)
+                if normalized_name not in categorized_dishes["mains"]:
+                    categorized_dishes["mains"].append(normalized_name)
     
-    # Limit each category to 20 dishes
+    # Limit each category to 20 dishes and remove duplicates
     for category in categorized_dishes:
-        categorized_dishes[category] = categorized_dishes[category][:20]
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_dishes = []
+        for dish in categorized_dishes[category]:
+            dish_lower = dish.lower()
+            if dish_lower not in seen:
+                seen.add(dish_lower)
+                unique_dishes.append(dish)
+        categorized_dishes[category] = unique_dishes[:20]
     
     return categorized_dishes
 
@@ -707,62 +869,129 @@ def create_user_profile(user_dishes: UserDishes):
         "desserts": desserts_profile
     }
 
-# Initialize EasyOCR reader (lazy loading)
-ocr_reader = None
+# Initialize OCR readers (lazy loading)
+paddleocr_reader = None
+easyocr_reader = None
 
-def get_ocr_reader():
-    """Lazy load OCR reader"""
-    global ocr_reader
-    if ocr_reader is None:
-        if EASYOCR_AVAILABLE:
-            try:
-                ocr_reader = easyocr.Reader(['en'], gpu=False)
-            except Exception as e:
-                print(f"Warning: EasyOCR initialization failed: {e}")
-                ocr_reader = "pytesseract" if PYTESSERACT_AVAILABLE else None
-        elif PYTESSERACT_AVAILABLE:
-            ocr_reader = "pytesseract"
-        else:
-            ocr_reader = None
-    return ocr_reader
+def preprocess_image(image: Image.Image) -> Image.Image:
+    """Preprocess image for better OCR accuracy"""
+    # Convert to RGB if needed
+    if image.mode != 'RGB':
+        image = image.convert('RGB')
+    
+    # Convert to grayscale for better text recognition
+    if image.mode != 'L':
+        gray = image.convert('L')
+    else:
+        gray = image
+    
+    # Enhance contrast
+    enhancer = ImageEnhance.Contrast(gray)
+    gray = enhancer.enhance(1.5)
+    
+    # Enhance sharpness
+    enhancer = ImageEnhance.Sharpness(gray)
+    gray = enhancer.enhance(2.0)
+    
+    # Apply slight denoising
+    gray = gray.filter(ImageFilter.MedianFilter(size=3))
+    
+    # Convert back to RGB for OCR libraries that expect it
+    return gray.convert('RGB')
+
+def get_paddleocr_reader():
+    """Lazy load PaddleOCR reader"""
+    global paddleocr_reader
+    if paddleocr_reader is None and PADDLEOCR_AVAILABLE:
+        try:
+            # Use English language, CPU mode, enable text direction classification
+            paddleocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
+        except Exception as e:
+            print(f"Warning: PaddleOCR initialization failed: {e}")
+            paddleocr_reader = None
+    return paddleocr_reader
+
+def get_easyocr_reader():
+    """Lazy load EasyOCR reader"""
+    global easyocr_reader
+    if easyocr_reader is None and EASYOCR_AVAILABLE:
+        try:
+            easyocr_reader = easyocr.Reader(['en'], gpu=False)
+        except Exception as e:
+            print(f"Warning: EasyOCR initialization failed: {e}")
+            easyocr_reader = None
+    return easyocr_reader
 
 def extract_text_from_image(image_bytes: bytes) -> str:
-    """Extract text from menu image using OCR"""
+    """Extract text from menu image using OCR with improved preprocessing"""
     if not PIL_AVAILABLE:
         raise HTTPException(
             status_code=500, 
             detail="PIL/Pillow not installed. Please install: pip install Pillow"
         )
     
-    reader = get_ocr_reader()
-    
-    if reader is None:
-        raise HTTPException(
-            status_code=500, 
-            detail="OCR not available. Please install easyocr (pip install easyocr) or pytesseract (pip install pytesseract). See OCR_SETUP.md for instructions."
-        )
-    
     try:
         from PIL import Image
         import io
-        image = Image.open(io.BytesIO(image_bytes))
-        # Convert to RGB if needed
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
+        import numpy as np
         
-        if reader != "pytesseract":
-            # Use EasyOCR
-            import numpy as np
-            img_array = np.array(image)
-            results = reader.readtext(img_array)
-            # Combine all detected text
-            text = '\n'.join([result[1] for result in results])
-            return text
-        else:
-            # Use pytesseract
+        # Load and preprocess image
+        image = Image.open(io.BytesIO(image_bytes))
+        processed_image = preprocess_image(image)
+        img_array = np.array(processed_image)
+        
+        # Try PaddleOCR first (best for structured text like menus)
+        paddle_reader = get_paddleocr_reader()
+        if paddle_reader:
+            try:
+                results = paddle_reader.ocr(img_array, cls=True)
+                if results and results[0]:
+                    # Extract text from PaddleOCR results
+                    # Format: [[[bbox], (text, confidence)], ...]
+                    text_lines = []
+                    for line in results[0]:
+                        if line and len(line) >= 2:
+                            text = line[1][0] if isinstance(line[1], tuple) else str(line[1])
+                            confidence = line[1][1] if isinstance(line[1], tuple) and len(line[1]) > 1 else 1.0
+                            # Filter by confidence (only keep high-confidence text)
+                            if confidence > 0.5:
+                                text_lines.append(text)
+                    if text_lines:
+                        return '\n'.join(text_lines)
+            except Exception as e:
+                print(f"PaddleOCR error: {e}, falling back to other OCR")
+        
+        # Try EasyOCR as fallback
+        easyocr_reader = get_easyocr_reader()
+        if easyocr_reader:
+            try:
+                results = easyocr_reader.readtext(img_array)
+                text_lines = []
+                for result in results:
+                    if len(result) >= 2:
+                        text = result[1]
+                        confidence = result[2] if len(result) > 2 else 1.0
+                        # Filter by confidence
+                        if confidence > 0.5:
+                            text_lines.append(text)
+                if text_lines:
+                    return '\n'.join(text_lines)
+            except Exception as e:
+                print(f"EasyOCR error: {e}, falling back to pytesseract")
+        
+        # Fallback to pytesseract
+        if PYTESSERACT_AVAILABLE:
             import pytesseract
-            text = pytesseract.image_to_string(image)
+            # Use processed image for better results
+            text = pytesseract.image_to_string(processed_image, config='--psm 6')
             return text
+        
+        raise HTTPException(
+            status_code=500, 
+            detail="No OCR engine available. Please install paddleocr (pip install paddleocr) or easyocr (pip install easyocr) or pytesseract (pip install pytesseract)."
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error extracting text from image: {str(e)}")
 
