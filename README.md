@@ -177,6 +177,16 @@ If the script doesn't work or you prefer manual setup, run these commands from t
 
 ---
 
+## 👨‍💻 Authors
+
+**Bhanu Sharma**  
+sharma.bhan@northeastern.edu
+
+**Ayushmann Khandelwal**  
+khandelwal.ayu@northeastern.edu
+
+---
+
 Enjoy using Swaad! 🍽️
 
 
