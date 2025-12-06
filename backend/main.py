@@ -1108,9 +1108,10 @@ def get_recommendations(request: RecommendationsRequest):
             else:
                 dish_categories["mains"].append(dish)
     
-    # Find recipes matching menu dishes, keeping track of their categories
-    categorized_recipes = {
-        "appetizer": [],
+    # Find recipes matching menu dishes, keeping track of menu dish name -> recipe mapping
+    # This preserves the original menu dish names for display
+    categorized_menu_dish_mappings = {
+        "appetizer": [],  # List of tuples: (menu_dish_name, recipe_dict)
         "mains": [],
         "desserts": []
     }
@@ -1119,7 +1120,8 @@ def get_recommendations(request: RecommendationsRequest):
         for dish_name in dishes:
             recipe = find_recipe_by_name(dish_name, df)
             if recipe:
-                categorized_recipes[category].append(recipe)
+                # Store the mapping: (original menu dish name, matched recipe)
+                categorized_menu_dish_mappings[category].append((dish_name, recipe))
     
     # Get recommendations for each category
     recommendations = {
@@ -1131,23 +1133,24 @@ def get_recommendations(request: RecommendationsRequest):
     for category in ["appetizer", "mains", "desserts"]:
         # Fix Pydantic deprecation: use model_dump() instead of dict()
         user_profile_dict = user_profile.model_dump()[category]
-        category_recipes = categorized_recipes[category]
+        menu_dish_mappings = categorized_menu_dish_mappings[category]
         
-        # Calculate similarity scores
-        scored_recipes = []
-        for recipe in category_recipes:
+        # Calculate similarity scores, keeping track of menu dish names
+        scored_items = []
+        for menu_dish_name, recipe in menu_dish_mappings:
             if isinstance(recipe['flavor_profile'], str):
                 recipe_profile = ast.literal_eval(recipe['flavor_profile'])
             else:
                 recipe_profile = recipe['flavor_profile']
             
             similarity = calculate_similarity(user_profile_dict, recipe_profile)
-            scored_recipes.append((recipe, similarity))
+            # Store: (menu_dish_name, recipe, similarity_score)
+            scored_items.append((menu_dish_name, recipe, similarity))
         
         # Sort by similarity and get top 5
-        scored_recipes.sort(key=lambda x: x[1], reverse=True)
+        scored_items.sort(key=lambda x: x[2], reverse=True)
         
-        for recipe, score in scored_recipes[:5]:
+        for menu_dish_name, recipe, score in scored_items[:5]:
             if isinstance(recipe['ingredients'], str):
                 ingredients = ast.literal_eval(recipe['ingredients'])
             else:
@@ -1158,9 +1161,10 @@ def get_recommendations(request: RecommendationsRequest):
             else:
                 flavor_profile = recipe['flavor_profile']
             
+            # Use the original menu dish name instead of recipe name
             recommendations[category].append({
                 "id": int(recipe['id']),
-                "name": recipe['name'],
+                "name": menu_dish_name,  # Use menu dish name, not recipe name
                 "ingredients": ingredients,
                 "flavor_profile": flavor_profile,
                 "similarity_score": round(score, 3),
