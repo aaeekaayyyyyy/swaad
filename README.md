@@ -63,7 +63,7 @@ Run the start script which will automatically create a virtual environment and i
 ./start.sh
 ```
 
-Once complete, open your browser and go to **http://localhost:3000** — you're all set! 🎉
+Once complete, open your browser and go to **http://localhost:3000** – you're all set! 🎉
 
 ---
 
@@ -98,7 +98,7 @@ If the script doesn't work or you prefer manual setup, run these commands from t
    npm run dev --prefix ./frontend
    ```
 
-6. **Open your browser and go to** **http://localhost:3000** — done! 🎉
+6. **Open your browser and go to** **http://localhost:3000** – done! 🎉
 
 ---
 
@@ -148,6 +148,16 @@ If the script doesn't work or you prefer manual setup, run these commands from t
 
 ---
 
+## 📊 Dataset
+
+This project uses the Food.com Recipes and User Interactions dataset from Kaggle:
+
+**[Food.com Recipes and User Interactions Dataset](https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions?select=RAW_recipes.csv)**
+
+The dataset contains comprehensive recipe information including ingredients, cooking instructions, and nutritional data, which forms the foundation for the flavor profile matching system.
+
+---
+
 ## 🔧 Troubleshooting
 
 ### General Issues
@@ -188,5 +198,3 @@ khandelwal.ayu@northeastern.edu
 ---
 
 Enjoy using Swaad! 🍽️
-
-
